@@ -44,6 +44,7 @@ class PathPlannerNode(Node):
         
     def create_plan_cb(self, request, response):
         start_time = self.get_clock().now()
+        costmap = self.basic_navigator.getGlobalCostmap()  # Get costmap here
         
         # Try multiple cost thresholds if initial path finding fails
         for cost_threshold in self.cost_thresholds:
@@ -51,10 +52,10 @@ class PathPlannerNode(Node):
             if path_coords:
                 self.get_logger().info(f"Found path with cost threshold: {cost_threshold}")
                 response.path = self.create_path_msg(path_coords, 
-                                                   request.goal.header.frame_id,
-                                                   self.get_clock().now().to_msg(),
-                                                   costmap.metadata.origin.position.x,
-                                                   costmap.metadata.origin.position.y)
+                                                request.goal.header.frame_id,
+                                                self.get_clock().now().to_msg(),
+                                                costmap.metadata.origin.position.x,
+                                                costmap.metadata.origin.position.y)
                 return response
                 
         self.get_logger().error("Failed to find path with all cost thresholds")
