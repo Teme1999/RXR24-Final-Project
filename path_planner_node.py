@@ -9,14 +9,29 @@ from create_plan_msgs.srv import CreatePlan
 from nav2_simple_commander.robot_navigator import BasicNavigator
 
 class AStarNode:
+    _node_count = 0  # Class variable to generate unique IDs
+    
     def __init__(self, position, g_cost=float('inf'), h_cost=0):
         self.position = position  # (x, y)
         self.g_cost = g_cost     # cost from start to current
         self.h_cost = h_cost     # heuristic cost to goal
         self.parent = None
+        # Assign unique ID for tie-breaking
+        self.id = AStarNode._node_count
+        AStarNode._node_count += 1
         
     def f_cost(self):
         return self.g_cost + self.h_cost
+        
+    def __lt__(self, other):
+        # First compare f_costs
+        if self.f_cost() != other.f_cost():
+            return self.f_cost() < other.f_cost()
+        # If f_costs are equal, break ties using h_cost
+        if self.h_cost != other.h_cost:
+            return self.h_cost < other.h_cost
+        # If still tied, use unique ID
+        return self.id < other.id
 
 class PathPlannerNode(Node):
     def __init__(self):
