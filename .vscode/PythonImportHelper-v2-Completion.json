@@ -1,0 +1,103 @@
+[
+    {
+        "label": "rclpy",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "rclpy",
+        "description": "rclpy",
+        "detail": "rclpy",
+        "documentation": {}
+    },
+    {
+        "label": "Node",
+        "importPath": "rclpy.node",
+        "description": "rclpy.node",
+        "isExtraImport": true,
+        "detail": "rclpy.node",
+        "documentation": {}
+    },
+    {
+        "label": "math",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "math",
+        "description": "math",
+        "detail": "math",
+        "documentation": {}
+    },
+    {
+        "label": "PriorityQueue",
+        "importPath": "queue",
+        "description": "queue",
+        "isExtraImport": true,
+        "detail": "queue",
+        "documentation": {}
+    },
+    {
+        "label": "Path",
+        "importPath": "nav_msgs.msg",
+        "description": "nav_msgs.msg",
+        "isExtraImport": true,
+        "detail": "nav_msgs.msg",
+        "documentation": {}
+    },
+    {
+        "label": "OccupancyGrid",
+        "importPath": "nav_msgs.msg",
+        "description": "nav_msgs.msg",
+        "isExtraImport": true,
+        "detail": "nav_msgs.msg",
+        "documentation": {}
+    },
+    {
+        "label": "PoseStamped",
+        "importPath": "geometry_msgs.msg",
+        "description": "geometry_msgs.msg",
+        "isExtraImport": true,
+        "detail": "geometry_msgs.msg",
+        "documentation": {}
+    },
+    {
+        "label": "CreatePlan",
+        "importPath": "create_plan_msgs.srv",
+        "description": "create_plan_msgs.srv",
+        "isExtraImport": true,
+        "detail": "create_plan_msgs.srv",
+        "documentation": {}
+    },
+    {
+        "label": "BasicNavigator",
+        "importPath": "nav2_simple_commander.robot_navigator",
+        "description": "nav2_simple_commander.robot_navigator",
+        "isExtraImport": true,
+        "detail": "nav2_simple_commander.robot_navigator",
+        "documentation": {}
+    },
+    {
+        "label": "AStarNode",
+        "kind": 6,
+        "importPath": "path_planner_node",
+        "description": "path_planner_node",
+        "peekOfCode": "class AStarNode:\n    _node_count = 0  # Class variable to generate unique IDs\n    def __init__(self, position, g_cost=float('inf'), h_cost=0):\n        self.position = position  # (x, y)\n        self.g_cost = g_cost     # cost from start to current\n        self.h_cost = h_cost     # heuristic cost to goal\n        self.parent = None\n        # Assign unique ID for tie-breaking\n        self.id = AStarNode._node_count\n        AStarNode._node_count += 1",
+        "detail": "path_planner_node",
+        "documentation": {}
+    },
+    {
+        "label": "PathPlannerNode",
+        "kind": 6,
+        "importPath": "path_planner_node",
+        "description": "path_planner_node",
+        "peekOfCode": "class PathPlannerNode(Node):\n    def __init__(self):\n        super().__init__(\"path_planner_node\")\n        self.basic_navigator = BasicNavigator()\n        self.srv = self.create_service(CreatePlan, 'create_plan', self.create_plan_cb)\n        self.resolution = 0.05  # meters per cell\n    def create_plan_cb(self, request, response):\n        start_pose = request.start\n        goal_pose = request.goal\n        time_now = self.get_clock().now().to_msg()",
+        "detail": "path_planner_node",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "path_planner_node",
+        "description": "path_planner_node",
+        "peekOfCode": "def main(args=None):\n    rclpy.init(args=args)\n    node = PathPlannerNode()\n    rclpy.spin(node)\n    rclpy.shutdown()\nif __name__ == '__main__':\n    main()",
+        "detail": "path_planner_node",
+        "documentation": {}
+    }
+]
