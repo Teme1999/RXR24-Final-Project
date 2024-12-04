@@ -31,17 +31,34 @@ class PathPlannerNode(Node):
         time_now = self.get_clock().now().to_msg()
         costmap = self.basic_navigator.getGlobalCostmap()
         
-        # Convert poses to grid coordinates
-        start_point = (int(start_pose.pose.position.x / self.resolution),
-                      int(start_pose.pose.position.y / self.resolution))
-        goal_point = (int(goal_pose.pose.position.x / self.resolution),
-                     int(goal_pose.pose.position.y / self.resolution))
+        # Get costmap origin for offset correction
+        origin_x = costmap.metadata.origin.position.x
+        origin_y = costmap.metadata.origin.position.y
+        
+        # Convert poses to grid coordinates with origin offset
+        start_point = (
+            int((start_pose.pose.position.x - origin_x) / self.resolution),
+            int((start_pose.pose.position.y - origin_y) / self.resolution)
+        )
+        goal_point = (
+            int((goal_pose.pose.position.x - origin_x) / self.resolution),
+            int((goal_pose.pose.position.y - origin_y) / self.resolution)
+        )
+        
+        # Debug logging
+        self.get_logger().info(f"Costmap size: {costmap.metadata.size_x}x{costmap.metadata.size_y}")
+        self.get_logger().info(f"Start point (grid): {start_point}")
+        self.get_logger().info(f"Goal point (grid): {goal_point}")
         
         # Get path using A*
         path_coords = self.astar(start_point, goal_point, costmap)
         
-        # Convert to ROS Path message
-        response.path = self.create_path_msg(path_coords, goal_pose.header.frame_id, time_now)
+        if not path_coords:
+            self.get_logger().error("Failed to find valid path")
+            return response
+        
+        # Convert back to world coordinates with origin offset
+        response.path = self.create_path_msg(path_coords, goal_pose.header.frame_id, time_now, origin_x, origin_y)
         return response
 
     def heuristic(self, a, b):
@@ -70,21 +87,31 @@ class PathPlannerNode(Node):
         return neighbors
 
     def astar(self, start, goal, costmap):
-        # Validate input coordinates against costmap bounds
+        # Get dimensions and validate with some tolerance
         width = costmap.metadata.size_x
         height = costmap.metadata.size_y
         
-        if not (0 <= start[0] < width and 0 <= start[1] < height and 
-                0 <= goal[0] < width and 0 <= goal[1] < height):
-            self.get_logger().error("Start or goal position out of bounds")
+        # Add small tolerance for floating point/rounding issues
+        tolerance = 2
+        if (start[0] < -tolerance or start[0] >= width + tolerance or
+            start[1] < -tolerance or start[1] >= height + tolerance or
+            goal[0] < -tolerance or goal[0] >= width + tolerance or
+            goal[1] < -tolerance or goal[1] >= height + tolerance):
+            self.get_logger().error(f"Position out of bounds. Map size: {width}x{height}, Start: {start}, Goal: {goal}")
             return []
-            
+        
+        # Clamp coordinates to valid range
+        start = (max(0, min(width-1, start[0])), max(0, min(height-1, start[1])))
+        goal = (max(0, min(width-1, goal[0])), max(0, min(height-1, goal[1])))
+        
         open_set = PriorityQueue()
         start_node = AStarNode(start, 0, self.heuristic(start, goal))
         open_set.put((start_node.f_cost(), start_node))
         
         closed_set = {}
         came_from = {}
+        
+        g_scores = {start: 0}  # Track g_scores separately
         
         while not open_set.empty():
             current = open_set.get()[1]
@@ -105,14 +132,17 @@ class PathPlannerNode(Node):
                 
                 tentative_g = current.g_cost + step_cost
                 
-                neighbor = AStarNode(neighbor_pos)
-                neighbor.g_cost = tentative_g
-                neighbor.h_cost = self.heuristic(neighbor_pos, goal)
-                neighbor.parent = current
-                
-                open_set.put((neighbor.f_cost(), neighbor))
-                came_from[neighbor_pos] = current.position
-                
+                # Check if this path is better than previous ones
+                if neighbor_pos not in g_scores or tentative_g < g_scores[neighbor_pos]:
+                    g_scores[neighbor_pos] = tentative_g
+                    neighbor = AStarNode(neighbor_pos)
+                    neighbor.g_cost = tentative_g
+                    neighbor.h_cost = self.heuristic(neighbor_pos, goal)
+                    neighbor.parent = current
+                    
+                    open_set.put((neighbor.f_cost(), neighbor))
+                    came_from[neighbor_pos] = current.position
+        
         self.get_logger().warn("No path found")
         return []
 
@@ -124,7 +154,7 @@ class PathPlannerNode(Node):
         path.append(current.position)
         return path[::-1]
 
-    def create_path_msg(self, path_coords, frame_id, stamp):
+    def create_path_msg(self, path_coords, frame_id, stamp, origin_x, origin_y):
         path_msg = Path()
         path_msg.header.frame_id = frame_id
         path_msg.header.stamp = stamp
@@ -132,8 +162,9 @@ class PathPlannerNode(Node):
         for x, y in path_coords:
             pose = PoseStamped()
             pose.header = path_msg.header
-            pose.pose.position.x = x * self.resolution
-            pose.pose.position.y = y * self.resolution
+            # Convert back to world coordinates
+            pose.pose.position.x = x * self.resolution + origin_x
+            pose.pose.position.y = y * self.resolution + origin_y
             pose.pose.orientation.w = 1.0
             path_msg.poses.append(pose)
             
