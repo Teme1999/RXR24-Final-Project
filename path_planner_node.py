@@ -39,51 +39,50 @@ class PathPlannerNode(Node):
         self.basic_navigator = BasicNavigator()
         self.srv = self.create_service(CreatePlan, 'create_plan', self.create_plan_cb)
         self.resolution = 0.05  # meters per cell
+        self.max_search_time = 5.0  # seconds
+        self.cost_thresholds = [50, 70, 90]  # Progressive cost thresholds
         
     def create_plan_cb(self, request, response):
-        start_pose = request.start
-        goal_pose = request.goal
-        time_now = self.get_clock().now().to_msg()
-        costmap = self.basic_navigator.getGlobalCostmap()
+        start_time = self.get_clock().now()
         
-        # Get costmap origin for offset correction
+        # Try multiple cost thresholds if initial path finding fails
+        for cost_threshold in self.cost_thresholds:
+            path_coords = self.try_find_path(request, cost_threshold, start_time)
+            if path_coords:
+                self.get_logger().info(f"Found path with cost threshold: {cost_threshold}")
+                response.path = self.create_path_msg(path_coords, 
+                                                   request.goal.header.frame_id,
+                                                   self.get_clock().now().to_msg(),
+                                                   costmap.metadata.origin.position.x,
+                                                   costmap.metadata.origin.position.y)
+                return response
+                
+        self.get_logger().error("Failed to find path with all cost thresholds")
+        return response
+
+    def try_find_path(self, request, cost_threshold, start_time):
+        costmap = self.basic_navigator.getGlobalCostmap()
         origin_x = costmap.metadata.origin.position.x
         origin_y = costmap.metadata.origin.position.y
         
-        # Convert poses to grid coordinates with origin offset
         start_point = (
-            int((start_pose.pose.position.x - origin_x) / self.resolution),
-            int((start_pose.pose.position.y - origin_y) / self.resolution)
+            int((request.start.pose.position.x - origin_x) / self.resolution),
+            int((request.start.pose.position.y - origin_y) / self.resolution)
         )
         goal_point = (
-            int((goal_pose.pose.position.x - origin_x) / self.resolution),
-            int((goal_pose.pose.position.y - origin_y) / self.resolution)
+            int((request.goal.pose.position.x - origin_x) / self.resolution),
+            int((request.goal.pose.position.y - origin_y) / self.resolution)
         )
         
-        # Debug logging
-        self.get_logger().info(f"Costmap size: {costmap.metadata.size_x}x{costmap.metadata.size_y}")
-        self.get_logger().info(f"Start point (grid): {start_point}")
-        self.get_logger().info(f"Goal point (grid): {goal_point}")
-        
-        # Get path using A*
-        path_coords = self.astar(start_point, goal_point, costmap)
-        
-        if not path_coords:
-            self.get_logger().error("Failed to find valid path")
-            return response
-        
-        # Convert back to world coordinates with origin offset
-        response.path = self.create_path_msg(path_coords, goal_pose.header.frame_id, time_now, origin_x, origin_y)
-        return response
+        return self.astar(start_point, goal_point, costmap, cost_threshold, start_time)
 
     def heuristic(self, a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])  # Manhattan distance
 
-    def get_neighbors(self, current, costmap):
+    def get_neighbors(self, current, costmap, cost_threshold):
         neighbors = []
         directions = [(0,1), (1,0), (0,-1), (-1,0), (1,1), (-1,1), (1,-1), (-1,-1)]
         
-        # Get costmap dimensions
         width = costmap.metadata.size_x
         height = costmap.metadata.size_y
         
@@ -91,63 +90,54 @@ class PathPlannerNode(Node):
             new_x = current[0] + dx
             new_y = current[1] + dy
             
-            # Check bounds
             if (0 <= new_x < width and 0 <= new_y < height):
-                # Convert to costmap index
                 index = int(new_y * width + new_x)
                 
-                # Check if position is traversable (cost < 50)
-                if index < len(costmap.data) and costmap.data[index] < 50:
-                    neighbors.append((new_x, new_y))
+                # Allow higher cost cells but with penalty
+                if index < len(costmap.data) and costmap.data[index] < cost_threshold:
+                    # Add penalty for higher cost cells
+                    cost_penalty = 1.0 + (costmap.data[index] / 100.0)
+                    neighbors.append((new_x, new_y, cost_penalty))
         return neighbors
 
-    def astar(self, start, goal, costmap):
-        # Get dimensions and validate with some tolerance
+    def astar(self, start, goal, costmap, cost_threshold, start_time):
         width = costmap.metadata.size_x
         height = costmap.metadata.size_y
         
-        # Add small tolerance for floating point/rounding issues
-        tolerance = 2
-        if (start[0] < -tolerance or start[0] >= width + tolerance or
-            start[1] < -tolerance or start[1] >= height + tolerance or
-            goal[0] < -tolerance or goal[0] >= width + tolerance or
-            goal[1] < -tolerance or goal[1] >= height + tolerance):
-            self.get_logger().error(f"Position out of bounds. Map size: {width}x{height}, Start: {start}, Goal: {goal}")
+        if not self.is_valid_position(start, goal, width, height):
             return []
-        
-        # Clamp coordinates to valid range
-        start = (max(0, min(width-1, start[0])), max(0, min(height-1, start[1])))
-        goal = (max(0, min(width-1, goal[0])), max(0, min(height-1, goal[1])))
-        
+            
         open_set = PriorityQueue()
         start_node = AStarNode(start, 0, self.heuristic(start, goal))
         open_set.put((start_node.f_cost(), start_node))
         
         closed_set = {}
         came_from = {}
-        
-        g_scores = {start: 0}  # Track g_scores separately
+        g_scores = {start: 0}
         
         while not open_set.empty():
+            # Check timeout
+            if (self.get_clock().now() - start_time).nanoseconds / 1e9 > self.max_search_time:
+                self.get_logger().warn("Path finding timed out")
+                return []
+                
             current = open_set.get()[1]
             
             if current.position == goal:
                 return self.reconstruct_path(came_from, current)
-            
+                
             closed_set[current.position] = current
             
-            for neighbor_pos in self.get_neighbors(current.position, costmap):
+            for neighbor_pos, cost_penalty in self.get_neighbors(current.position, costmap, cost_threshold):
                 if neighbor_pos in closed_set:
                     continue
                     
-                # Calculate actual cost including diagonal movement
                 dx = abs(neighbor_pos[0] - current.position[0])
                 dy = abs(neighbor_pos[1] - current.position[1])
-                step_cost = 1.4 if dx + dy == 2 else 1.0  # 1.4 for diagonal, 1.0 for cardinal
+                step_cost = (1.4 if dx + dy == 2 else 1.0) * cost_penalty
                 
                 tentative_g = current.g_cost + step_cost
                 
-                # Check if this path is better than previous ones
                 if neighbor_pos not in g_scores or tentative_g < g_scores[neighbor_pos]:
                     g_scores[neighbor_pos] = tentative_g
                     neighbor = AStarNode(neighbor_pos)
@@ -158,8 +148,16 @@ class PathPlannerNode(Node):
                     open_set.put((neighbor.f_cost(), neighbor))
                     came_from[neighbor_pos] = current.position
         
-        self.get_logger().warn("No path found")
         return []
+
+    def is_valid_position(self, start, goal, width, height):
+        tolerance = 2
+        return not (
+            start[0] < -tolerance or start[0] >= width + tolerance or
+            start[1] < -tolerance or start[1] >= height + tolerance or
+            goal[0] < -tolerance or goal[0] >= width + tolerance or
+            goal[1] < -tolerance or goal[1] >= height + tolerance
+        )
 
     def reconstruct_path(self, came_from, current):
         path = []
