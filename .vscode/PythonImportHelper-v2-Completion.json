@@ -78,7 +78,7 @@
         "kind": 6,
         "importPath": "path_planner_node",
         "description": "path_planner_node",
-        "peekOfCode": "class AStarNode:\n    _node_count = 0  # Class variable to generate unique IDs\n    def __init__(self, position, g_cost=float('inf'), h_cost=0):\n        self.position = position  # (x, y)\n        self.g_cost = g_cost     # cost from start to current\n        self.h_cost = h_cost     # heuristic cost to goal\n        self.parent = None\n        # Assign unique ID for tie-breaking\n        self.id = AStarNode._node_count\n        AStarNode._node_count += 1",
+        "peekOfCode": "class AStarNode:\n    \"\"\"A* algorithm node with position and cost tracking for pathfinding.\"\"\"\n    _node_count = 0\n    def __init__(self, position, g_cost=float('inf'), h_cost=0):\n        \"\"\"Initialize node with position and path costs.\"\"\"\n        self.position = position\n        self.g_cost = g_cost\n        self.h_cost = h_cost\n        self.parent = None\n        self.id = AStarNode._node_count",
         "detail": "path_planner_node",
         "documentation": {}
     },
@@ -87,7 +87,7 @@
         "kind": 6,
         "importPath": "path_planner_node",
         "description": "path_planner_node",
-        "peekOfCode": "class PathPlannerNode(Node):\n    def __init__(self):\n        super().__init__(\"path_planner_node\")\n        self.basic_navigator = BasicNavigator()\n        self.srv = self.create_service(CreatePlan, 'create_plan', self.create_plan_cb)\n        self.resolution = 0.05  # meters per cell\n    def create_plan_cb(self, request, response):\n        start_pose = request.start\n        goal_pose = request.goal\n        time_now = self.get_clock().now().to_msg()",
+        "peekOfCode": "class PathPlannerNode(Node):\n    \"\"\"ROS2 path planning node implementing A* search algorithm.\"\"\"\n    def __init__(self):\n        \"\"\"Initialize planner with navigation and service setup.\"\"\"\n        super().__init__(\"path_planner_node\")\n        self.basic_navigator = BasicNavigator()\n        self.srv = self.create_service(CreatePlan, 'create_plan', self.create_plan_cb)\n        self.resolution = 0.05\n    def create_plan_cb(self, request, response):\n        \"\"\"Handle path planning service requests.\"\"\"",
         "detail": "path_planner_node",
         "documentation": {}
     },
@@ -96,7 +96,7 @@
         "kind": 2,
         "importPath": "path_planner_node",
         "description": "path_planner_node",
-        "peekOfCode": "def main(args=None):\n    rclpy.init(args=args)\n    node = PathPlannerNode()\n    rclpy.spin(node)\n    rclpy.shutdown()\nif __name__ == '__main__':\n    main()",
+        "peekOfCode": "def main(args=None):\n    \"\"\"Entry point for the path planner node.\"\"\"\n    rclpy.init(args=args)\n    node = PathPlannerNode()\n    rclpy.spin(node)\n    rclpy.shutdown()\nif __name__ == '__main__':\n    main()",
         "detail": "path_planner_node",
         "documentation": {}
     }
