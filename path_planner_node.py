@@ -51,18 +51,34 @@ class PathPlannerNode(Node):
         neighbors = []
         directions = [(0,1), (1,0), (0,-1), (-1,0), (1,1), (-1,1), (1,-1), (-1,-1)]
         
+        # Get costmap dimensions
+        width = costmap.metadata.size_x
+        height = costmap.metadata.size_y
+        
         for dx, dy in directions:
             new_x = current[0] + dx
             new_y = current[1] + dy
             
-            # Check bounds and obstacles
-            if (0 <= new_x < costmap.info.width and 
-                0 <= new_y < costmap.info.height and 
-                costmap.data[new_y * costmap.info.width + new_x] < 50):  # If cost < 50, assume traversable
-                neighbors.append((new_x, new_y))
+            # Check bounds
+            if (0 <= new_x < width and 0 <= new_y < height):
+                # Convert to costmap index
+                index = int(new_y * width + new_x)
+                
+                # Check if position is traversable (cost < 50)
+                if index < len(costmap.data) and costmap.data[index] < 50:
+                    neighbors.append((new_x, new_y))
         return neighbors
 
     def astar(self, start, goal, costmap):
+        # Validate input coordinates against costmap bounds
+        width = costmap.metadata.size_x
+        height = costmap.metadata.size_y
+        
+        if not (0 <= start[0] < width and 0 <= start[1] < height and 
+                0 <= goal[0] < width and 0 <= goal[1] < height):
+            self.get_logger().error("Start or goal position out of bounds")
+            return []
+            
         open_set = PriorityQueue()
         start_node = AStarNode(start, 0, self.heuristic(start, goal))
         open_set.put((start_node.f_cost(), start_node))
@@ -82,7 +98,12 @@ class PathPlannerNode(Node):
                 if neighbor_pos in closed_set:
                     continue
                     
-                tentative_g = current.g_cost + 1
+                # Calculate actual cost including diagonal movement
+                dx = abs(neighbor_pos[0] - current.position[0])
+                dy = abs(neighbor_pos[1] - current.position[1])
+                step_cost = 1.4 if dx + dy == 2 else 1.0  # 1.4 for diagonal, 1.0 for cardinal
+                
+                tentative_g = current.g_cost + step_cost
                 
                 neighbor = AStarNode(neighbor_pos)
                 neighbor.g_cost = tentative_g
@@ -92,7 +113,8 @@ class PathPlannerNode(Node):
                 open_set.put((neighbor.f_cost(), neighbor))
                 came_from[neighbor_pos] = current.position
                 
-        return []  # No path found
+        self.get_logger().warn("No path found")
+        return []
 
     def reconstruct_path(self, came_from, current):
         path = []
