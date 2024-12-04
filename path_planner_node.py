@@ -128,12 +128,15 @@ class PathPlannerNode(Node):
                 
             closed_set[current.position] = current
             
-            for neighbor_pos, cost_penalty in self.get_neighbors(current.position, costmap, cost_threshold):
+            # Unpack all three values from get_neighbors
+            for new_x, new_y, cost_penalty in self.get_neighbors(current.position, costmap, cost_threshold):
+                neighbor_pos = (new_x, new_y)
+                
                 if neighbor_pos in closed_set:
                     continue
                     
-                dx = abs(neighbor_pos[0] - current.position[0])
-                dy = abs(neighbor_pos[1] - current.position[1])
+                dx = abs(new_x - current.position[0])
+                dy = abs(new_y - current.position[1])
                 step_cost = (1.4 if dx + dy == 2 else 1.0) * cost_penalty
                 
                 tentative_g = current.g_cost + step_cost
