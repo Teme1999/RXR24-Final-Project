@@ -16,6 +16,8 @@ class AStarNode:
         self.g_cost = g_cost     # cost from start to current
         self.h_cost = h_cost     # heuristic cost to goal
         self.parent = None
+        self.default_cost_thresholds = [50, 70, 90]  # Store default values
+        self.cost_thresholds = self.default_cost_thresholds.copy()
         # Assign unique ID for tie-breaking
         self.id = AStarNode._node_count
         AStarNode._node_count += 1
@@ -42,24 +44,120 @@ class PathPlannerNode(Node):
         self.max_search_time = 5.0  # seconds
         self.cost_thresholds = [50, 70, 90]  # Progressive cost thresholds
         
-    def create_plan_cb(self, request, response):
-        start_time = self.get_clock().now()
-        costmap = self.basic_navigator.getGlobalCostmap()  # Get costmap here
+        # Path caching and reuse parameters
+        self.last_path = None
+        self.last_path_time = None
+        self.path_reuse_timeout = 2.0  # seconds
+        self.path_similarity_threshold = 0.5  # meters
         
-        # Try multiple cost thresholds if initial path finding fails
-        for cost_threshold in self.cost_thresholds:
-            path_coords = self.try_find_path(request, cost_threshold, start_time)
-            if path_coords:
-                self.get_logger().info(f"Found path with cost threshold: {cost_threshold}")
-                response.path = self.create_path_msg(path_coords, 
-                                                request.goal.header.frame_id,
-                                                self.get_clock().now().to_msg(),
-                                                costmap.metadata.origin.position.x,
-                                                costmap.metadata.origin.position.y)
-                return response
-                
-        self.get_logger().error("Failed to find path with all cost thresholds")
-        return response
+        # Stuck detection parameters
+        self.position_history = []
+        self.history_length = 10
+        self.stuck_threshold = 0.1
+        self.stuck_time_threshold = 2.0
+        self.last_position_time = None
+
+    def create_plan_cb(self, request, response):
+        try:
+            current_time = self.get_clock().now()
+            current_pos = (request.start.pose.position.x, request.start.pose.position.y)
+            goal_pos = (request.goal.pose.position.x, request.goal.pose.position.y)
+
+            # Check if we can reuse the last path
+            if self.can_reuse_path(current_pos, goal_pos, current_time):
+                self.get_logger().info("Reusing previous path")
+                return self.last_path
+
+            # Check if stuck before calculating new path
+            if self.is_stuck(current_pos):
+                self.get_logger().warn("Robot appears to be stuck, finding alternative path")
+                self.cost_thresholds = [t + 20 for t in self.cost_thresholds]
+            
+            # Update position history
+            self.update_position_history(current_pos)
+            
+            # Calculate new path
+            costmap = self.basic_navigator.getGlobalCostmap()
+            for cost_threshold in self.cost_thresholds:
+                path_coords = self.try_find_path(request, cost_threshold, current_time)
+                if path_coords:
+                    response.path = self.create_path_msg(path_coords, 
+                                                       request.goal.header.frame_id,
+                                                       current_time.to_msg(),
+                                                       costmap.metadata.origin.position.x,
+                                                       costmap.metadata.origin.position.y)
+                    # Cache the new path
+                    self.last_path = response.path
+                    self.last_path_time = current_time
+                    # Reset cost thresholds after successful path finding
+                    self.cost_thresholds = self.default_cost_thresholds.copy()
+                    return response
+            
+            self.get_logger().error("Failed to find path with all cost thresholds")
+            return response
+        except Exception as e:
+            self.get_logger().error(f"Error in create_plan_cb: {str(e)}")
+            return response
+
+    def can_reuse_path(self, current_pos, goal_pos, current_time):
+        if not self.last_path or not self.last_path_time:
+            return False
+            
+        # Check if enough time has passed since last path calculation
+        time_since_last_path = (current_time - self.last_path_time).nanoseconds / 1e9
+        if time_since_last_path < self.path_reuse_timeout:
+            # Check if current position is close enough to the path
+            if self.is_position_on_path(current_pos, self.last_path):
+                # Check if goal hasn't changed significantly
+                last_goal = self.last_path.poses[-1].pose.position
+                last_goal_pos = (last_goal.x, last_goal.y)
+                if self.distance(goal_pos, last_goal_pos) < self.path_similarity_threshold:
+                    return True
+        return False
+
+    def is_position_on_path(self, position, path):
+        for pose in path.poses:
+            path_pos = (pose.pose.position.x, pose.pose.position.y)
+            if self.distance(position, path_pos) < self.path_similarity_threshold:
+                return True
+        return False
+
+    def distance(self, pos1, pos2):
+        dx = pos1[0] - pos2[0]
+        dy = pos1[1] - pos2[1]
+        return math.sqrt(dx*dx + dy*dy)
+            
+
+    def update_position_history(self, current_pos):
+        current_time = self.get_clock().now()
+        
+        # Clear history if too old
+        if self.position_history and \
+           (current_time - self.position_history[0][1]).nanoseconds / 1e9 > self.stuck_time_threshold * 2:
+            self.position_history.clear()
+            
+        self.position_history.append((current_pos, current_time))
+        if len(self.position_history) > self.history_length:
+            self.position_history.pop(0)
+
+    def is_stuck(self, current_pos):
+        if len(self.position_history) < self.history_length:
+            return False
+            
+        # Check if position hasn't changed significantly
+        oldest_pos, oldest_time = self.position_history[0]
+        current_time = self.get_clock().now()
+        
+        # Calculate distance moved
+        dx = current_pos[0] - oldest_pos[0]
+        dy = current_pos[1] - oldest_pos[1]
+        distance_moved = math.sqrt(dx*dx + dy*dy)
+        
+        # Calculate time elapsed
+        time_elapsed = (current_time - oldest_time).nanoseconds / 1e9
+        
+        # Consider stuck if minimal movement over threshold time
+        return distance_moved < self.stuck_threshold and time_elapsed > self.stuck_time_threshold
 
     def try_find_path(self, request, cost_threshold, start_time):
         costmap = self.basic_navigator.getGlobalCostmap()
