@@ -16,8 +16,6 @@ class AStarNode:
         self.g_cost = g_cost     # cost from start to current
         self.h_cost = h_cost     # heuristic cost to goal
         self.parent = None
-        self.default_cost_thresholds = [50, 70, 90]  # Store default values
-        self.cost_thresholds = self.default_cost_thresholds.copy()
         # Assign unique ID for tie-breaking
         self.id = AStarNode._node_count
         AStarNode._node_count += 1
@@ -42,7 +40,10 @@ class PathPlannerNode(Node):
         self.srv = self.create_service(CreatePlan, 'create_plan', self.create_plan_cb)
         self.resolution = 0.05  # meters per cell
         self.max_search_time = 5.0  # seconds
-        self.cost_thresholds = [50, 70, 90]  # Progressive cost thresholds
+        
+        # Define default thresholds and current thresholds
+        self.default_cost_thresholds = [50, 70, 90]  # Store default values
+        self.cost_thresholds = self.default_cost_thresholds.copy()
         
         # Path caching and reuse parameters
         self.last_path = None
